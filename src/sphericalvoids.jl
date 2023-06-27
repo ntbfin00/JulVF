@@ -625,7 +625,7 @@ function voidfinder(cat::Main.VoidParameters.GalaxyCatalogue, mesh::Main.VoidPar
     nbins, r_sep, vol, threshold = gal_dens_bin(cat, mesh)
     @info "Catalogue details:" r_sep vol
 
-    # set default void radii to 3-10x mean galaxy separation
+    # set default void radii to 2-10x mean galaxy separation
     if par.radii == [0]
         par.radii = [10:-1:2;] * r_sep
         @info "Default radii set" 

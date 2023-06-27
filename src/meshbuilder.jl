@@ -81,7 +81,7 @@ function gal_dens_bin(cat::Main.VoidParameters.GalaxyCatalogue, mesh::Main.VoidP
 
                 @debug "Counting filled cells"
                 # find where randoms are greater than 0.01 * average randoms per cell
-                threshold = 0.01 * sum(rec.mesh_randoms.value)/nbins_tot
+                threshold = 0.01 * sum(rec.mesh_randoms.value)/size(cat.rand_pos,1)#nbins_tot
                 filled_cells = count(q->(q > threshold), rec.mesh_randoms.value)
                 vol_est = filled_cells * cell_vol
 
@@ -143,7 +143,7 @@ function set_recon_engine(cosmo::Main.VoidParameters.Cosmology, cat::Main.VoidPa
 end
 
 
-function compute_density_field(cat::Main.VoidParameters.GalaxyCatalogue, mesh::Main.VoidParameters.MeshParams, rec, r_smooth::Float64)
+function compute_density_field(cat::Main.VoidParameters.GalaxyCatalogue, mesh::Main.VoidParameters.MeshParams, rec, r_smooth::Float64; return_mask=false)
 
     @info "Assigning galaxies to grid"
     gal_pos = PyObject(cat.gal_pos)
@@ -211,25 +211,54 @@ function create_mesh(cat::Main.VoidParameters.GalaxyCatalogue, mesh::Main.VoidPa
 
     # set bias=1 so voids are found in the galaxy field (not matter field)
     # other cosmological parameters are have no effect on mesh construction 
-    cosmo_vf = Main.VoidParameters.Cosmology(; bias=1.)
+    # cosmo_vf = Main.VoidParameters.Cosmology(; bias=1.)
 
     # pad box if survey
+    # if size(cat.rand_pos,1) != 0 
+        # rec = set_recon_engine(cosmo_vf, cat, mesh, mesh.nbins_vf, mesh.padding)[1]
+    # else
+        # rec = set_recon_engine(cosmo_vf, cat, mesh, mesh.nbins_vf, 1.)[1]
+        # mask = nothing
+    # end
     if size(cat.rand_pos,1) != 0 
-        rec = set_recon_engine(cosmo_vf, cat, mesh, mesh.nbins_vf, mesh.padding)[1]
+        los = nothing
+        pos = PyObject(cat.rand_pos)
+        pad = mesh.padding
+
     else
-        rec = set_recon_engine(cosmo_vf, cat, mesh, mesh.nbins_vf, 1.)[1]
+        los = mesh.los
+        pos = PyObject(cat.gal_pos)
+        pad = 1.
         mask = nothing
     end
+    recon = pyimport("pyrecon.recon")
+    rec = recon.BaseReconstruction(f=1., bias=1., los=los, nmesh=mesh.nbins_vf, positions=pos, boxpad=pad, wrap=true, dtype=mesh.dtype, nthreads=Threads.nthreads())
 
-    # determine density on mesh
-    compute_density_field(cat, mesh, rec, 0.)
-
+    @info "Assigning galaxies to grid"
+    gal_pos = PyObject(cat.gal_pos)
+    gal_wts = PyObject(cat.gal_wts)
+    rec.assign_data(gal_pos, gal_wts)
+    if size(cat.rand_pos,1) != 0
+        @info "Assigning randoms to grid"
+        rand_pos = PyObject(cat.rand_pos)
+        rand_wts = PyObject(cat.rand_wts)
+        rec.assign_randoms(rand_pos, rand_wts)
+    end
+    mask = [rec.mesh_randoms.value .<= threshold]
+    r_smooth = sum(rec.boxsize/mesh.nbins_vf)/3  # set smoothing radius to cell resolution
+    @info "Computing smoothed density field" r_smooth
+    rec.set_density_contrast(smoothing_radius=r_smooth)      
     delta = rec.mesh_delta.value
 
-    # compute survey mask for empty cells
-    if size(cat.rand_pos,1) != 0         
-        mask = [rec.mesh_randoms.value .<= threshold]
-    end
+    # # determine density on mesh
+    # compute_density_field(cat, mesh, rec, 0.)
+
+    # delta = rec.mesh_delta.value
+
+    # # compute survey mask for empty cells
+    # if size(cat.rand_pos,1) != 0         
+        # mask = [rec.mesh_randoms.value .<= threshold]
+    # end
 
     @debug "Check for NaN values in mesh " any_NaN = any(isnan, delta)
 
